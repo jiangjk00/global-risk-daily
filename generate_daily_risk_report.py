@@ -369,10 +369,10 @@ def collect_rss(start, end, per_feed=10):
     return out
 
 
-def collect_rss_search(start, end, per_query=6, per_section=15):
+def collect_rss_search(start, end, per_query=5, per_section=10):
     """RSS 检索兜底：用 Google News / Bing News RSS 按板块关键词检索。
     GDELT 被限频或返回空时提供数据；解析不出时间的条目一律丢弃（严格限时）。
-    每板块最多保留 per_section 条，避免条目过多导致报告冗长。失败静默跳过。"""
+    每板块最多保留 per_section 条（控制报告长度，避免输出截断）。失败静默跳过。"""
     out, seen = [], set()
     section_count = {}
     for name, keywords in RSS_QUERIES.items():
@@ -471,7 +471,7 @@ SYSTEM_PROMPT = """你是一名资深国际风险分析师，负责编制《全�
 3. 涉及中国台湾地区的事项，遵循一个中国原则表述（用"中国台湾地区""对台军售"等）。
 4. 用风险视角提炼影响，区分"事实"与"研判"。
 5. 输出纯 Markdown，不要代码块包裹。
-6. 【篇幅控制】全文控制在 4000-6000 字以内：每个子节用"要点式"列出最关键的 2-6 条事实，每条简洁（一两句话+来源链接），避免逐条铺陈、避免重复同一事件的多个来源；确保五大板块全部覆盖，不得遗漏任何板块。"""
+6. 【篇幅控制·必须遵守】全文控制在 **3000-4500 字**：每个子节只列最关键的 **2-4 条**要点，每条一两句话+一个来源链接；同一事件只保留最权威的一个来源；宁可精简，不可遗漏板块——**五大板块（一~五）必须全部输出**，包括"四、中东"与"五、其他重大信息"的每个子节。若某子节无信息，写"本窗口内未见重大新增（保留监测）"即可，不展开。"""
 
 USER_TEMPLATE = """覆盖窗口：{start} ~ {end}（北京时间）
 以下是该窗口内检索到的原始新闻条目（JSON，每条含 title/domain/url/section）：
