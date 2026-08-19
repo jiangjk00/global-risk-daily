@@ -56,6 +56,22 @@ RSS_FEEDS = [
     "http://www.xinhuanet.com/politics/news_politics.xml",   # 新华网·时政
 ]
 
+# RSS 检索备用源（无需 API key；GDELT 被限频/返回空时兜底）
+# - Google News RSS / Bing News RSS：GitHub Actions（海外）可访问
+RSS_SEARCH_SOURCES = [
+    "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en",
+    "https://www.bing.com/news/search?q={q}&format=rss",
+]
+
+# 每个板块用于 RSS 检索的简单关键词（GDELT 的复杂 OR 查询不能直接用于 RSS）
+RSS_QUERIES = {
+    "美西方及盟友涉华动向": ["China Taiwan", "China Japan Philippines", "South China Sea"],
+    "乌克兰危机": ["Ukraine Russia", "Russia Ukraine ceasefire"],
+    "中东局势": ["Iran Hormuz", "Israel Gaza", "Houthi Red Sea"],
+    "朝鲜问题": ["North Korea", "Kim Jong Un"],
+    "大宗商品原油": ["oil price Brent", "crude oil market"],
+}
+
 # ===== GDELT 检索关键词（中英文混合，覆盖全球来源）=====
 SECTIONS = {
     "美西方及盟友涉华动向": (
@@ -298,6 +314,8 @@ def _parse_rss_date(s: str):
         "%a, %d %b %Y %H:%M:%S %Z",
         "%Y-%m-%d %H:%M:%S",
         "%a, %d %b %Y %H:%M:%S GMT",
+        "%Y-%m-%dT%H:%M:%SZ",          # ISO8601
+        "%Y-%m-%dT%H:%M:%S%z",
     )
     for v in variants:
         for fmt in fmts:
@@ -351,9 +369,59 @@ def collect_rss(start, end, per_feed=10):
     return out
 
 
+def collect_rss_search(start, end, per_query=8):
+    """RSS 检索兜底：用 Google News / Bing News RSS 按板块关键词检索。
+    GDELT 被限频或返回空时提供数据；解析不出时间的条目一律丢弃（严格限时）。
+    失败静默跳过，不影响主流程。"""
+    out, seen = [], set()
+    for name, keywords in RSS_QUERIES.items():
+        for kw in keywords:
+            for tmpl in RSS_SEARCH_SOURCES:
+                try:
+                    url = tmpl.format(q=requests.utils.quote(kw))
+                    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
+                                     timeout=12)
+                    if r.status_code != 200 or not r.content.strip().startswith(b"<"):
+                        continue
+                    root = ET.fromstring(r.content)
+                    items = root.findall(".//item")
+                    n = 0
+                    for it in items:
+                        if n >= per_query:
+                            break
+                        title = (it.findtext("title") or "").strip()
+                        link = it.findtext("link") or ""
+                        pub = it.findtext("pubDate") or it.findtext("updated") or ""
+                        pdate = _parse_rss_date(pub)
+                        if pdate is None:
+                            continue
+                        pdate_bj = pdate.astimezone(BEIJING) if pdate.tzinfo else pdate.replace(tzinfo=BEIJING)
+                        if not (start <= pdate_bj <= end):
+                            continue
+                        if not title or not link or link in seen:
+                            continue
+                        seen.add(link)
+                        out.append({
+                            "section": name + "（RSS检索）",
+                            "title": title,
+                            "domain": "news.google.com" if "google" in tmpl else "bing.com",
+                            "seendate": pub,
+                            "url": link,
+                            "sourcecountry": "",
+                        })
+                        n += 1
+                except Exception:
+                    continue
+                time.sleep(0.5)
+    return out
+
+
 def collect_news(start, end):
     arts = collect_gdelt(start, end)
     arts += collect_rss(start, end)
+    # GDELT 结果不足时，用 RSS 检索兜底，保证每日出报有数据
+    if len(arts) < 10:
+        arts += collect_rss_search(start, end)
     return arts
 
 
