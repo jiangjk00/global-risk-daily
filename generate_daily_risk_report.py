@@ -369,15 +369,18 @@ def collect_rss(start, end, per_feed=10):
     return out
 
 
-def collect_rss_search(start, end, per_query=8):
+def collect_rss_search(start, end, per_query=6, per_section=15):
     """RSS 检索兜底：用 Google News / Bing News RSS 按板块关键词检索。
     GDELT 被限频或返回空时提供数据；解析不出时间的条目一律丢弃（严格限时）。
-    失败静默跳过，不影响主流程。"""
+    每板块最多保留 per_section 条，避免条目过多导致报告冗长。失败静默跳过。"""
     out, seen = [], set()
+    section_count = {}
     for name, keywords in RSS_QUERIES.items():
         for kw in keywords:
             for tmpl in RSS_SEARCH_SOURCES:
                 try:
+                    if section_count.get(name, 0) >= per_section:
+                        break
                     url = tmpl.format(q=requests.utils.quote(kw))
                     r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
                                      timeout=12)
@@ -387,7 +390,7 @@ def collect_rss_search(start, end, per_query=8):
                     items = root.findall(".//item")
                     n = 0
                     for it in items:
-                        if n >= per_query:
+                        if n >= per_query or section_count.get(name, 0) >= per_section:
                             break
                         title = (it.findtext("title") or "").strip()
                         link = it.findtext("link") or ""
@@ -401,6 +404,7 @@ def collect_rss_search(start, end, per_query=8):
                         if not title or not link or link in seen:
                             continue
                         seen.add(link)
+                        section_count[name] = section_count.get(name, 0) + 1
                         out.append({
                             "section": name + "（RSS检索）",
                             "title": title,
@@ -466,7 +470,8 @@ SYSTEM_PROMPT = """你是一名资深国际风险分析师，负责编制《全�
    不要用脚注编号，也不要在文末另列"资料来源"汇总表。
 3. 涉及中国台湾地区的事项，遵循一个中国原则表述（用"中国台湾地区""对台军售"等）。
 4. 用风险视角提炼影响，区分"事实"与"研判"。
-5. 输出纯 Markdown，不要代码块包裹。"""
+5. 输出纯 Markdown，不要代码块包裹。
+6. 【篇幅控制】全文控制在 4000-6000 字以内：每个子节用"要点式"列出最关键的 2-6 条事实，每条简洁（一两句话+来源链接），避免逐条铺陈、避免重复同一事件的多个来源；确保五大板块全部覆盖，不得遗漏任何板块。"""
 
 USER_TEMPLATE = """覆盖窗口：{start} ~ {end}（北京时间）
 以下是该窗口内检索到的原始新闻条目（JSON，每条含 title/domain/url/section）：
@@ -492,7 +497,7 @@ def call_llm(news_json: str, start: str, end: str) -> str:
                 start=start, end=end, news_json=news_json)},
         ],
         temperature=0.3,
-        max_tokens=4000,
+        max_tokens=8000,  # 报告板块多，需足够输出上限，避免被截断
     )
     return resp.choices[0].message.content
 
